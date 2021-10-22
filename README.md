@@ -18,6 +18,11 @@ fastp -i "${SPECIES_ACC}.fastq" -o "${SPECIES_ACC}_trimmed.fastq" -w 8 -j "${SPE
 kallisto quant -i ${1}/${1}.index -o "${SPECIES_ACC}_tpm_kallisto" --bias --single -l 200 -s 25 -t 8 "${SPECIES_ACC}_trimmed.fastq"
 ```
 
+# Clustering 
+
+Clustering was performed based on absolute codon frequencies with the `ca.R` script.
+See script for command line input parameters. 
+
 # Analysis with ROC-SEMPPR
 
 AnaCoDa is currently available on CRAN.
@@ -34,7 +39,8 @@ Processed CDS files are available upon request, but are not included here due to
 Analysis can be performed using the following commands.
 The first command was used for processing CDS for yeasts with the canonical genetic code.
 The second command was used for processing CDS for yeasts with CTG coding for serine by specifying `--codon_table 12`.
-Note that this will only work using the branch `CTG_Ser`. 
+Note that this will only work using the branch `CTG_Ser`.
+
 ```bash
 Rscript --vanilla Scripts/rocAnalysis.R -i "$INPUT" -o "$OUTPUT" -d 20 -s 20000 -a 20 -t 10 -n 8 --est_csp --est_phi --est_hyp  --max_num_runs 2
 Rscript --vanilla Scripts/rocAnalysis.R -i "$INPUT" -o "$OUTPUT" -d 20 -s 20000 -a 20 -t 10 -n 8 --est_csp --est_phi --est_hyp  --max_num_runs 2 --codon_table 12
