@@ -39,10 +39,10 @@ vignettes/*.pdf
 .Renviron
 
 # AnaCoDa output to ignore
-*/Graphs
-*/Graphs/mcmc_traces.pdf
-*/Graphs/CSP_traces_CUB_plot.pdf
-*/Parameter_est/convergence_*.txt
-*/R_objects
-*/R_objects/parameter.Rda
-*/R_objects/mcmc.Rda
+**/Graphs
+**/Graphs/mcmc_traces.pdf
+**/Graphs/CSP_traces_CUB_plot.pdf
+**/Parameter_est/convergence_*.txt
+**/R_objects
+**/R_objects/parameter.Rda
+**/R_objects/mcmc.Rda
