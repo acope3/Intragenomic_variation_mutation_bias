@@ -287,6 +287,7 @@ createChrDf <- function(cluster.file,gc.file,gff.file,gff.id="transcript_id",chr
   {
     gc.clust <- gc.clust %>% filter(!Chr %in% chr.to.exclude)
   }
+  gc.clust <- gc.clust %>% filter(!is.na(Cluster))
   gc.clust$Cluster_binary <- ifelse(gc.clust$Cluster == 1,0,1)
   gc.clust <- gc.clust %>% distinct()
   return(gc.clust)
@@ -563,11 +564,14 @@ gc.sig <- target.species.gc %>%
           mutate(ks.results=map2(`2`,`1`,~ks.test(.x$GC3,.y$GC3))) %>% 
           mutate(tidied=map(ks.results,tidy),`1` = map(`1`, nrow),`2` = map(`2`, nrow)) %>% 
           unnest(tidied,`1`,`2`) %>% 
-          select(-ks.results)
+          select(-ks.results) %>% 
+          mutate(p.value=ifelse(p.value == 0,
+                                "p < 2.2e-16",
+                                paste0("p = ",as.character(round(p.value,2)))))
 
 gc.stats <- gc.median %>% left_join(gc.sig,by="Species") %>%
             mutate(label=str_c(as.character(round(Median.Diff,2)),
-                               paste0("p = ",as.character(round(p.value,2)),sep="",collapse=""),sep="\n")) %>%
+                              p.value,sep="\n")) %>%
             dplyr::rename(Count_1=`1`,Count_2=`2`)
 
 gc.stats.long <- gc.stats %>% pivot_longer(c(Count_1,Count_2,Min_1,Min_2),names_to=c(".value","Cluster"),names_sep="_") %>%
@@ -579,7 +583,7 @@ gc3.violin.clust <- ggplot(target.species.gc,aes(x=Cluster,y=GC3,fill=Cluster)) 
               xlab("Group") +
               scale_fill_manual(values=color.scheme,name = "Gene Cluster",labels = c("Genome", "Lower GC3%","Higher GC3%")) +
               theme(axis.title.x=element_blank(),legend.position = "bottom",legend.text = element_text(size=18),legend.title = element_text(size=18)) +
-              geom_bracket(data=gc.stats,aes(label = label,xmin=Group1,xmax=Group2,y.position=0.85),step.group.by="Species",inherit.aes=F) +
+              geom_bracket(data=gc.stats,aes(label = label,xmin=Group1,xmax=Group2,y.position=0.875),vjust=-0.05,step.group.by="Species",inherit.aes=F) +
               geom_text(data=gc.stats.long,aes(label=Count,x=Cluster,y=Min-0.025)) +
               facet_wrap(~Species,ncol=8)
 
@@ -949,8 +953,8 @@ sel.ratio <- sel.ratio %>%
  mutate(Species=cleanSpeciesLabels(Species))
   
 sel.ratio <-sel.ratio %>% group_by(Species,AA) %>% 
-  mutate(Min.Mean_1 = rank(Mean_1),Min.Mean_2 = rank(Mean_2)) %>% 
-  mutate(Optimal_1 = ifelse(Min.Mean_1 == 1,"Yes","No"),Optimal_2=ifelse(Min.Mean_2 == 1,"Yes","No")) %>%
+  mutate(Min.Mean_1 = rank(Mean_1),Min.Mean_2 = rank(Mean_2)) %>% # get ranking 
+  mutate(Optimal_1 = ifelse(Min.Mean_1 == 1,"Yes","No"),Optimal_2=ifelse(Min.Mean_2 == 1,"Yes","No")) %>% # Optimal codon should be minimum
   ungroup()
 
 
