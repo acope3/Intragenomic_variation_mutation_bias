@@ -8,15 +8,15 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo=F, results='hide',message=F)
-rm(list=ls())
+#rm(list=ls())
 library(tidyverse)
 library(AnaCoDa,lib.loc="~/R_dev")
 library(rtracklayer)
 library(cowplot)
 library(ggpubr)
+library(ape)
 library(ggpointdensity)
 library(ggside)
-library(ape)
 library(ggtree)
 library(scales)
 library(seqinr)
@@ -88,14 +88,15 @@ compareCSP <- function(k1,k2,title,xlab,ylab)
   return(p) 
 }
 
-createTable <- function(k1.file,k2.file,empirical.data.file,clust.file)
+createTable <- function(k1.file,k2.file,codonw.file,empirical.data.file,clust.file)
 {
   clust <- read_tsv(clust.file,col_types = cols()) %>% dplyr::rename(GeneID=Gene)
   k1.phi <- read_csv(k1.file,col_types = cols()) %>% dplyr::select(GeneID,Mean) %>% dplyr::rename(Phi_Shared_Mutation = Mean)
   k2.phi <- read_csv(k2.file,col_types = cols()) %>% dplyr::select(GeneID,Mean) %>% dplyr::rename(Phi_Variable_Mutation = Mean)
   k1.phi$GeneID <- str_remove(k1.phi$GeneID,"_Allele")
   k2.phi$GeneID <- str_remove(k2.phi$GeneID,"_Allele")
-  
+  codonw <- read_csv(codonw.file,col_types = cols())
+  codonw$GeneID <- str_remove(codonw$GeneID,"_Allele")
   empirical.data <- read_csv(empirical.data.file,col_types = cols()) %>% 
     mutate(across(contains("tpm_kallisto"),~na_if(., 0))) %>%
     mutate(across(contains("tpm_kallisto"),log)) %>%
@@ -106,7 +107,7 @@ createTable <- function(k1.file,k2.file,empirical.data.file,clust.file)
   empirical.data$GeneID <- str_remove(empirical.data$GeneID,"_Allele")
   clust$GeneID <- str_remove(clust$GeneID,"_Allele")
   empirical.data$Empirical <- 10^6/sum(empirical.data$Empirical,na.rm=T) * empirical.data$Empirical
-  all.values <- list(k1.phi,k2.phi,clust,empirical.data) %>% purrr::reduce(left_join,by="GeneID")
+  all.values <- list(k1.phi,k2.phi,codonw,clust,empirical.data) %>% purrr::reduce(left_join,by="GeneID")
   return(all.values)
   
 }
@@ -116,7 +117,7 @@ compareSpeciesPlot <- function(species.df,metric="Phi_Shared_Mutation",title="Co
 {
    emp.vs.pred <- ggplot(species.df,aes_string(x="Empirical",y=metric)) + geom_pointdensity(size=0.5,show.legend = F) + 
                  scale_x_log10(labels = trans_format("log10", math_format(10^.x))) + 
-                 scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
+                 #scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
                  theme_cowplot() +
                  ylab("Scaled Predicted Expression") +
                  xlab("Empirical Expression (RNA TPM)") +
@@ -124,6 +125,11 @@ compareSpeciesPlot <- function(species.df,metric="Phi_Shared_Mutation",title="Co
                  stat_cor(method = "spearman",label.sep = "\n",label.x.npc = 0.05,label.y.npc = 0.95) +
                  facet_wrap(~Species,...) +
                  ggtitle(title)
+   if (metric == "Phi_Shared_Mutation" || metric == "Phi_Variable_Mutation")
+   {
+     emp.vs.pred <- emp.vs.pred + scale_y_log10(labels = trans_format("log10", math_format(10^.x)))
+   }
+   
   return(emp.vs.pred)
 }
 
@@ -135,13 +141,15 @@ plotSpecies <- function(species.df,cub=c("Phi_Shared_Mutation","Phi_Variable_Mut
   species.df.wide <- species.df %>% pivot_wider(id_cols = c("Species","GeneID","Cluster","Empirical"),names_from="CUB",values_from = "Predicted")
   species.df.wide$Cluster <- as.factor(species.df.wide$Cluster)
   species.df$CUB <- factor(species.df$CUB,levels=c("Phi_Shared_Mutation","Phi_Variable_Mutation"))
-  levels(species.df$CUB) <- c("ROC (Shared Mutation Bias)","ROC (Variable Mutation Bias)")
-  emp.vs.pred <- ggplot(species.df,aes(x=Empirical,y=Predicted)) + geom_pointdensity(size=0.5,show.legend = F) + 
+  levels(species.df$CUB) <- c("ConstMut","VarMut")
+  emp.vs.pred <- ggplot(species.df,aes(x=Empirical,y=Predicted,color=as.factor(Cluster))) + geom_point(size=0.5,show.legend = F) + 
                scale_x_log10(labels = trans_format("log10", math_format(10^.x))) + 
                scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
                theme_cowplot() +
-               viridis::scale_color_viridis(option = "magma") + 
-               stat_cor(method="spearman",label.sep = "\n",label.x.npc = "left",label.y.npc = "top") +
+               #viridis::scale_color_viridis(option = "magma") + 
+               scale_color_manual(values = c("#E41A1C","#377EB8"),labels = c("Lower GC3% ","Higher GC3%"),name = "Gene Cluster") + 
+               stat_cor(method="spearman",label.sep = "\n",label.x.npc = "left",label.y.npc = "top",show.legend = F) +
+               stat_cor(mapping=aes(x=Empirical,y=Predicted),method="spearman",label.sep = "\n",label.x.npc = "left",label.y.npc = "bottom",inherit.aes=F) +
                facet_wrap(~CUB) +
                ggtitle(title) +
                theme(aspect.ratio=1)
@@ -151,8 +159,8 @@ plotSpecies <- function(species.df,cub=c("Phi_Shared_Mutation","Phi_Variable_Mut
               scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
               theme_cowplot() +
               scale_color_manual(values = c("#E41A1C","#377EB8"),labels = c("Lower GC3% ","Higher GC3%"),name = "Gene Cluster") + 
-              xlab("ROC (Shared Mutation Bias)") +
-              ylab("ROC (Variable Mutation Bias)") +
+              xlab("Predicted (ConstMut)") +
+              ylab("Predicted (VarMut)") +
               stat_cor(aes(x=Phi_Shared_Mutation,y=Phi_Variable_Mutation),method="spearman",label.sep = "\n",label.x.npc = "left",label.y.npc = "top",show.legend = F,inherit.aes = F) +
               theme(legend.position="top",legend.text = element_text(size=10),legend.title = element_text(size=12)) +
                theme(aspect.ratio=1)
@@ -163,13 +171,15 @@ plotSpecies <- function(species.df,cub=c("Phi_Shared_Mutation","Phi_Variable_Mut
 
 getCorrelation <- function(species.df)
 {
-  cor.table <- species.df %>% group_by(CUB) %>% summarize(Correlation=cor.test(Empirical,Predicted,use="complete.obs",method="spearman")$estimate,P = cor.test(Empirical,Predicted,use="complete.obs",method="spearman")$p.value)
+  cor.table <- species.df %>% group_by(CUB) %>% 
+    summarize(Correlation=cor.test(Empirical,Predicted,use="complete.obs",method="spearman")$estimate,P = cor.test(Empirical,Predicted,use="complete.obs",method="spearman")$p.value)
   cor.table <- cor.table %>% mutate(Species=unique(species.df$Species))
   return(cor.table)
 }
 
 
-compareFits<- function(species.df,cub=c("Phi_Shared_Mutation","Phi_Variable_Mutation"),...)
+compareFits<- function(species.df,cub=c("Phi_Shared_Mutation","Phi_Variable_Mutation"),color.scheme=c("#E41A1C","#377EB8"),
+                       cluster.names=c("Lower GC3% ","Higher GC3%"),...)
 {
   title <- cleanSpeciesLabels(unique(species.df$Species))
   k1.vs.k2 <- ggplot(species.df,aes(x=Phi_Shared_Mutation,y=Phi_Variable_Mutation,color=as.factor(Cluster))) + 
@@ -177,7 +187,7 @@ compareFits<- function(species.df,cub=c("Phi_Shared_Mutation","Phi_Variable_Muta
               scale_x_log10(labels = trans_format("log10", math_format(10^.x))) + 
               scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
               theme_cowplot() +
-              scale_color_manual(values = c("#E41A1C","#377EB8"),labels = c("Lower GC3% ","Higher GC3%"),name = "Gene Cluster") + 
+              scale_color_manual(values = color.scheme,labels = cluster.names,name = "Gene Cluster") + 
               xlab("Scaled Predicted Expression\nShared Mutation") +
               ylab("Scaled Predicted Expression\nVariable Mutation") +
               stat_cor(aes(x=Phi_Shared_Mutation,y=Phi_Variable_Mutation),method="spearman",label.sep = "\n",label.x.npc = 0.05,label.y.npc = 0.95,show.legend = F,inherit.aes = F) +
@@ -219,11 +229,11 @@ rescaleParam <- function(run.dir)
 }
 
 
-treeVsCorrelation <- function(tree,cor.df)
+treeVsCorrelation <- function(tree,cor.df,variable="ROC_Difference",panel.title="Correlation Shifts\nVarMut vs. ConstMut")
 {
   tree.plot <- ggtree(tree) + xlim_tree(500)
   tree.plot <- tree.plot + geom_tiplab()
-  corr.plot <- facet_plot(tree.plot,panel="Correlation Shifts\nVarMut vs. ConstMut",data=cor.df,geom=geom_segment,aes(x=0,xend=ROC_Difference,y=y,yend=y,color=Major.clade),size=4)
+  corr.plot <- facet_plot(tree.plot,panel=panel.title,data=cor.df,geom=geom_segment,aes(x=0,xend=!!as.name(variable),y=y,yend=y,color=Major.clade),size=4)
   return(corr.plot)
 }
 
@@ -346,6 +356,7 @@ compareGC3ToClusterFreq <- function(cluster.file,gc.file,gff.file,gff.id="transc
     gc3.lineplot <- ggplot(mov.avg.long) + 
              geom_line(aes(x=Gene.Number,y=Frequency,linetype=Moving.Average)) +
              geom_xsidetile(aes(x=Gene.Number,y=0.5,height=0.5,fill=Cluster)) +
+             #geom_line(aes(x=Gene.Number,y=`GC3%`)) +
              ggside(x.pos="bottom") +
              theme_cowplot() +
              ylim(c(0,1)) +
@@ -354,6 +365,7 @@ compareGC3ToClusterFreq <- function(cluster.file,gc.file,gff.file,gff.id="transc
              ggtitle(title) +
              xlab("Gene Number") +
              ylab("Frequency") +
+             #ylab("GC3%")
              scale_xsidey_continuous(breaks = NULL, labels = "", expand = expansion(c(0,.1))) +
              scale_ysidex_continuous(breaks = NULL, labels = "", expand = expansion(c(0,.1)))
     if (is.null(chr.to.plot))
@@ -414,7 +426,7 @@ y.label <- "Predicted Expression"
 
 runs.k.1 <- paste0("Results/ConstMut/",species,"/run_2/Parameter_est/gene_expression.txt")
 runs.k.2 <- paste0("Results/VarMut/",species,"/run_2/Parameter_est/gene_expression.txt")
-
+codonw.files <- paste0("/data2/cope/codonW/",species,"/",str_replace(species,".cds",".out_all"))
 
 mixtures <- paste0("Results/Clustering/",species)
 emp.data <- paste0("Data/Expression/",species)
@@ -429,11 +441,11 @@ titles <- species %>%
 
 gc.files <- file.path("Data/GC",species)
 names(gc.files) <- species
-gc.df <- map(gc.files,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
+gc.df <- purrr::map(gc.files,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
 gc.df <- gc.df %>% dplyr::rename(GeneID=Gene)
 
 names(mixtures) <- species
-mixtures.df <- map(mixtures,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
+mixtures.df <- purrr::map(mixtures,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
 mixtures.df <- mixtures.df %>% dplyr::rename(GeneID=Gene)
 
 gc.mixture.df <- mixtures.df %>% left_join(gc.df,by=c("Species","GeneID"))
@@ -449,6 +461,9 @@ gc.mixture.df <- gc.mixture.df %>%
                                          Cluster == 1 & Max.Cluster == 2 ~ 1,
                                          Cluster == 2 & Max.Cluster == 2 ~ 2)
               )
+
+
+
 ```
 
 
@@ -459,11 +474,12 @@ This will create a table for comparing ConstMut and VarMut expression prediction
 ```{r message=FALSE,echo = F, warning = F}
 names(runs.k.1) <- species
 names(runs.k.2) <- species
+names(codonw.files) <- species
 names(emp.data) <- species
 names(mixtures) <- species
 
 
-df <- pmap(list(runs.k.1,runs.k.2,emp.data,mixtures),createTable) %>% bind_rows(.id="Species")
+df <- pmap(list(runs.k.1,runs.k.2,codonw.files,emp.data,mixtures),createTable) %>% bind_rows(.id="Species")
 
 df <- df %>% left_join(gc.df,by=c("Species","GeneID"))
 
@@ -490,8 +506,9 @@ df.long.split <- df.long %>% group_by(Species) %>% group_split()
 This will generate scatter plots similar to those seen in Figures 1 and 2 comparing predicted and empirical expression estimates for the ConstMut and VarMut model.
 Will also compare predicted expression estimates between the two models. 
 
-```{r echo = F, warning = F,fig.width=14,fig.height=7}
+```{r echo = F, warning = F,fig.width=16,fig.height=7}
 purrr::map(df.long.split,plotSpecies)
+
 ```
 
 # Create Figure 1
@@ -502,11 +519,12 @@ We also show the distributions of GC3% of the two clusters estimated from the Co
 The difference in median GC3% between the clusters and the results of a KS test are indicated by the brackets. 
 We also show the phylogenetic relationships between the species, units in millions of years. 
 
-```{r echo = F,fig.width=18,fig.height=14}
+```{r echo = F,fig.width=9,fig.height=9}
 
 tree <- read.tree("Data/tree_with_cds_labels.nwk")
 
 target.species <- c("candida_parapsilosis.max.cds","candida_albicans.max.cds","candida_dubliniensis.max.cds","saccharomyces_cerevisiae.max.cds","saccharomyces_uvarum.max.cds","ogataea_polymorpha.max.cds","ogataea_parapolymorpha.max.cds","ogataea_methanolica.max.cds")
+
 
 target.tree <- cleanTree(tree,target.species)
 target.tree$tip.label <- cleanSpeciesLabels(target.tree$tip.label)
@@ -523,6 +541,7 @@ target.species.df$Species <- factor(target.species.df$Species,
                                           "saccharomyces_cerevisiae.max.cds",
                                           "saccharomyces_uvarum.max.cds"))
 
+
 target.species.df <- target.species.df %>% mutate(Species = cleanSpeciesLabels(Species),
                                                   Cluster=as.factor(Cluster))
 
@@ -533,7 +552,7 @@ target.tree <- rotateConstr(target.tree,levels.yeast)
 target.species.df$Species <- factor(target.species.df$Species,levels=levels.yeast)
 
 phi.shared <- compareSpeciesPlot(target.species.df,title="",ncol=8)
-
+phi.shared <- phi.shared + ggtitle("Detection of selection on codon usage varies between closely-related species")
 
 
 target.species.gc <- target.species.df %>% dplyr::select(Species,GeneID,Cluster,GC3)
@@ -561,10 +580,10 @@ gc.sig <- target.species.gc %>%
           dplyr::select(-GeneID) %>% 
           nest(GC3) %>% 
           pivot_wider(names_from=Cluster,values_from = data) %>% 
-          mutate(ks.results=map2(`2`,`1`,~ks.test(.x$GC3,.y$GC3))) %>% 
-          mutate(tidied=map(ks.results,tidy),`1` = map(`1`, nrow),`2` = map(`2`, nrow)) %>% 
+          mutate(ks.results=purrr::map2(`2`,`1`,~ks.test(.x$GC3,.y$GC3))) %>% 
+          mutate(tidied=purrr::map(ks.results,tidy),`1` = purrr::map(`1`, nrow),`2` = purrr::map(`2`, nrow)) %>% 
           unnest(tidied,`1`,`2`) %>% 
-          select(-ks.results) %>% 
+          dplyr::select(-ks.results) %>% 
           mutate(p.value=ifelse(p.value == 0,
                                 "p < 2.2e-16",
                                 paste0("p = ",as.character(round(p.value,2)))))
@@ -583,9 +602,10 @@ gc3.violin.clust <- ggplot(target.species.gc,aes(x=Cluster,y=GC3,fill=Cluster)) 
               xlab("Group") +
               scale_fill_manual(values=color.scheme,name = "Gene Cluster",labels = c("Genome", "Lower GC3%","Higher GC3%")) +
               theme(axis.title.x=element_blank(),legend.position = "bottom",legend.text = element_text(size=18),legend.title = element_text(size=18)) +
-              geom_bracket(data=gc.stats,aes(label = label,xmin=Group1,xmax=Group2,y.position=0.875),vjust=-0.05,step.group.by="Species",inherit.aes=F) +
-              geom_text(data=gc.stats.long,aes(label=Count,x=Cluster,y=Min-0.025)) +
-              facet_wrap(~Species,ncol=8)
+              geom_bracket(data=gc.stats,aes(label = label,xmin=Group1,xmax=Group2,y.position=0.6),vjust=-0.05,step.group.by="Species",inherit.aes=F) +
+              geom_text(data=gc.stats.long,aes(label=Count,x=Cluster,y=Min-0.05)) +
+              facet_wrap(~Species,ncol=8) +
+              ggtitle("Species with weaker correlations show larger variations in GC3% content")
 
 
 
@@ -593,19 +613,35 @@ tree.plot <- ggtree(target.tree,size=2, ladderize=F) +
   layout_dendrogram() +
   geom_tiplab(labels=labels,hjust = 0.5,offset=-20,size=5,font="bold") +
   ylab("Mya") +
-  theme_dendrogram(plot.margin=margin(20,4,60,4)) 
+  theme_dendrogram()
 
-
-emp.pred.gc3 <- plot_grid(tree.plot,phi.shared,gc3.violin.clust,nrow=3,ncol=1,labels=c("A","","B"),rel_heights = c(1,1,1),axis = "tblr",align="hv")
+emp.pred.gc3 <- plot_grid(phi.shared,gc3.violin.clust,nrow=2,ncol=1,labels=c("",""),rel_heights = c(1,1),axis = "tblr",align="hv")
 
 emp.pred.gc3
 
-ggsave("Figures/Figure_1.pdf",plot = emp.pred.gc3,width = 18,height = 14)
+ggsave("Figures/candida_ahmed_poster.png",plot = emp.pred.gc3,width = 12,height = 14)
 
 
 
 
 ```
+
+
+```{r,fig.width=21,fig.height=10}
+
+cai <- compareSpeciesPlot(target.species.df,metric = "CAI_CA",title="",ncol=8)
+cai <- cai + ylab("CAI") + ggtitle("CAI Predictions of Gene Expression")
+phi.shared <- phi.shared + ggtitle("ROC-SEMPPR Predictions of Gene Expression\nConstMut Model")
+phi.vs.cai <- plot_grid(phi.shared,cai,labels=c("A","B"),nrow=2)
+phi.vs.cai
+ggsave("Figures/cai.pdf",plot = phi.vs.cai,width = 14,height=7)
+
+cai <- compareSpeciesPlot(target.species.df,metric = "CAI_ribo",title="",ncol=8)
+cai
+```
+
+
+
 # Create Supplementary Figure 1 
 
 These plots illustrate that the apparent drop in correlation between predicted and empirical expression sets when using the ConstMut model is not due to quality of the RNA-seq data sets. 
@@ -776,7 +812,7 @@ We observe that in the case of significant intragenomic mutation bias variation,
 ```{r echo = F,fig.width=16,fig.height=14}
 bad.fits <- target.species.df %>% filter(Species %in% c("S. uvarum","C. albicans","C. dubliniensis","O. parapolymorpha","O. polymorpha"))
 
-phi.shared <- compareSpeciesPlot(target.species.df,title="ROC-SEMPPR Predictions of Gene Expression\nConstMut Modelr",ncol=8)
+phi.shared <- compareSpeciesPlot(target.species.df,title="ROC-SEMPPR Predictions of Gene Expression\nConstMut Model",ncol=8)
 
 phi.variable <- compareSpeciesPlot(target.species.df,metric="Phi_Variable_Mutation",title="ROC-SEMPPR Predictions of Gene Expression\nVarMut Model",ncol=8)
 
@@ -790,7 +826,7 @@ phi <- plot_grid(phi.shared,phi.variable,compare.phi,labels=c("A","B","C"),nrow=
 
 phi
 
-ggsave2("Figures/Figure_2.pdf",plot=phi,width = 16,height = 14)
+ggsave2("Figures/candida_for_ahmed.png",plot=phi,width = 8,height = 14)
 ```
 
 
@@ -800,9 +836,9 @@ ggsave2("Figures/Figure_2.pdf",plot=phi,width = 16,height = 14)
 This figure illustrates the physical clustering of genes assigned to the same clusters determined in the CA + CLARA approach. 
 The left panels quantify this covariation using 20-gene moving averages, while the right panels use non-overlapping windows of 20 genes. 
 
-```{r echo = F,fig.width=12,fig.height=14}
+```{r echo = F}
 
-calb <- compareGC3ToClusterFreq("Results/Clustering/candida_albicans.max.cds","Data/GC/candida_albicans.max.cds","Data//gff/candida.albicans.max.cds",gff.id="ID",chr.reg="chr[0-9R]",title="C. albicans Chr. 6",chr.to.plot = "chr6")
+calb <- compareGC3ToClusterFreq("Results/Clustering/candida_albicans.max.cds","Data/GC/candida_albicans.max.cds","Data//gff/candida.albicans.max.cds",gff.id="ID",chr.reg="chr[0-9R]",title="Genes assigned to same cluster are physically-clustered\non chromosomes: C. albicans Chr. 6",chr.to.plot = "chr6")
 
 opara <- compareGC3ToClusterFreq("Results/Clustering/ogataea_parapolymorpha.max.cds","Data/GC/ogataea_parapolymorpha.max.cds","Data//gtf/ogataea_parapolymorpha.max.gtf",chr.to.plot = "NC_027860.1",title="O. parapolymorpha Chr. NC_027860.1")
 
@@ -849,6 +885,8 @@ chr.plots <- plot_grid(suvar$Mov.Avg,
 chr.plots <- plot_grid(title,chr.plots,nrow=2,align="none",rel_heights = c(0.05,1))
 chr.plots
 
+calb[[1]]
+
 ggsave2("Figures/Figure_3.pdf",height=12,width=12)
 
 ```
@@ -886,9 +924,15 @@ suvar.all <- compareGC3ToClusterFreq("Results/Clustering/saccharomyces_uvarum.ma
 scer.all <- compareGC3ToClusterFreq("Results/Clustering/saccharomyces_cerevisiae.max.cds","Data/GC/saccharomyces_cerevisiae.max.cds","Data//gff/saccharomyces_cerevisiae_max.cds",title="S. cerevisiae",gff.id = "locus_tag",chr.to.exclude = "NC_001224.1")
 
 lkluy.all <- compareGC3ToClusterFreq("Results/Clustering/lachancea_kluyveri.max.cds","Data/GC/lachancea_kluyveri.max.cds","Data//gtf/lachancea_kluyveri.max.gtf",title="L. kluyveri")
-
+lkluy.all
 
 ltherm.all <- compareGC3ToClusterFreq("Results/Clustering/lachancea_thermotolerans.max.cds","Data/GC/lachancea_thermotolerans.max.cds","Data//gtf/lachancea_thermotolerans.max.gtf",title="L. thermotolerans")
+
+
+cglab.all <- compareGC3ToClusterFreq("Results/Clustering/candida_glabrata.max.cds","Data/GC/candida_glabrata.max.cds","Data//gtf/candida_glabrata.max.gtf",title="C. glabrata")
+
+cglab.all
+
 
 ## 4 - 11
 ggsave2("Figures/Supplementary_Figure_4.pdf",plot = suvar.all$Mov.Avg,height=12,width=12)
@@ -904,6 +948,22 @@ ggsave2("Figures/Supplementary_Figure_11.pdf",plot=omet.all$Mov.Avg,height=12,wi
 ggsave2("Figures/Supplementary_Figure_15.pdf",plot=lkluy.all$Mov.Avg,height=12,width=12)
 ggsave2("Figures/Supplementary_Figure_16.pdf",plot=ltherm.all$Mov.Avg,height=12,width=12)
 ```
+
+
+```{r}
+
+lkluy.c <- compareGC3ToClusterFreq("Results/Clustering/lachancea_kluyveri.max.cds","Data/GC/lachancea_kluyveri.max.cds","Data//gtf/lachancea_kluyveri.max.gtf",title="L.kluyveri Chr. C",chr.to.plot = c("SAKL0C"))
+lkluy.c[[1]] <- lkluy.c[[1]] + theme(aspect.ratio = 1)
+
+lkluy.b <- compareGC3ToClusterFreq("Results/Clustering/lachancea_kluyveri.max.cds","Data/GC/lachancea_kluyveri.max.cds","Data//gtf/lachancea_kluyveri.max.gtf",title="L. kluyveri\nChr. B",chr.to.plot = c("SAKL0B"))
+lkluy.b[[1]] <- lkluy.b[[1]] + theme(aspect.ratio = 1)
+
+comb <- plot_grid(lkluy.b[[1]],lkluy.c[[1]],nrow=1,align = "h")
+comb
+```
+
+
+
 # Create Supplementary Figure 12
 
 Same as right side panels in Figure 3, but for the species showing little impact of the VarMut model. 
@@ -1214,6 +1274,8 @@ med.diff <- gc.mixture.df %>%
              mutate(Species=cleanSpeciesLabels(Species),Median.Diff = `2` - `1`)
 
 corr.per.species.wide <- corr.per.species.wide %>% left_join(med.diff,by="Species")
+
+
 ```
 
 
@@ -1227,8 +1289,19 @@ est.tree <- est.tree + theme_tree2()+ theme(text = element_text(size=12),
                                           strip.background=element_blank()) + 
   xlim_tree(1100) + 
   labs(color = "Clade")
+est.tree
 
-legend <- get_legend(est.tree)
+est.tree <- treeVsCorrelation(tree,corr.per.species.wide,"Phi_Shared_Mutation","Correlation:\nEmpirical vs. Predicted Expression")
+est.tree <- est.tree + theme_tree2()+ theme(text = element_text(size=12),
+                                          strip.text = element_text(size=12),
+                                            legend.title = element_text(size=12),
+                                           legend.text=element_text(size=12),
+                                          strip.background=element_blank()) + 
+  xlim_tree(1100) + 
+  labs(color = "Clade")
+est.tree
+
+
 
 med.diff.plot <- ggplot(corr.per.species.wide,aes(x=Median.Diff,y=ROC_Difference,color=Major.clade)) + geom_point() +
             xlab("Difference in Median GC3%\nBetween Higher and Lower Clusters") +
@@ -1251,11 +1324,378 @@ ggsave2("Figures/Figure_5.pdf",plot=comb,width=12,height=8)
 
 ```
 
+```{r,fig.width=9,fig.height=8}
+est.tree <- treeVsCorrelation(tree,corr.per.species.wide,"Phi_Shared_Mutation","Correlation:\nEmpirical vs. Predicted Expression")
+est.tree <- est.tree + theme_tree2()+ theme(text = element_text(size=12),
+                                          strip.text = element_text(size=12),
+                                            legend.title = element_text(size=12),
+                                           legend.text=element_text(size=12),
+                                          strip.background=element_blank()) + 
+  xlim_tree(1100) + 
+  labs(color = "Clade")
+est.tree
+ggsave2("Figures/phi_shared_tree.pdf",plot=est.tree,width=9,height=8)
+
+```
+
+
+
+
+```{r}
+
+run.to.use <- rep("run_2",length(species))
+
+const.mut.dic.files <- file.path("Results","ConstMut",species,"run_2","DIC_loglik_logpost.tsv")
+names(const.mut.dic.files) <- species
+const.mut.dic.df <- purrr::map(const.mut.dic.files,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
+
+
+var.mut.dic.files <- file.path("Results","VarMut",species,run.to.use,"DIC_loglik_logpost.tsv")
+names(var.mut.dic.files) <- species
+var.mut.dic.df <- purrr::map(var.mut.dic.files,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
+
+
+dic.df <- const.mut.dic.df %>% left_join(var.mut.dic.df,by="Species",suffix=c("_ConstMut","_VarMut"))
+
+dic.df <- dic.df %>% mutate(Delta.DIC.LogPost = DIC.LogPost_VarMut - DIC.LogPost_ConstMut,
+                            Delta.DIC.LogLik = DIC.LogLik_VarMut - DIC.LogLik_ConstMut)
+
+
+dic.df <- dic.df %>% mutate(Species = cleanSpeciesLabels(Species))
+dic.df <- dic.df %>% left_join(corr.per.species.wide,by="Species")
+
+```
+
+```{r,fig.width=7,fig.height=7}
+
+
+dic.loglik.plot <- ggplot(dic.df,aes(x=ROC_Difference,y=Delta.DIC.LogLik,label=Species)) + geom_point() +
+            ggrepel::geom_text_repel(point.padding = 5) +
+            theme_cowplot() +
+            stat_cor(method="spearman",label.sep="\n",label.y.npc = "bottom",label.x.npc = "left") +
+            geom_hline(yintercept = 0,linetype="dashed") +
+            geom_vline(xintercept = 0,linetype="dashed") +
+            xlab("Spearman Correlation Empirical and Predicted Expression\nVarMut - ConstMut") +
+            ylab(expression(atop(Delta*"DIC","VarMut - ConstMut"))) +
+            ggtitle("Comparing ConstMut and VarMut Models\nEmpirical vs. Deviance Information Criterion") +
+            theme(aspect.ratio = 1)
+dic.loglik.plot
+
+dic.loglik.vs.gc3 <- ggplot(dic.df,aes(x=Median.Diff,y=Delta.DIC.LogLik,label=Species)) + geom_point() +
+            ggrepel::geom_text_repel(point.padding = 5) +
+            theme_cowplot() +
+            stat_cor(method="spearman",label.sep="\n",label.y.npc = "bottom",label.x.npc = "left") +
+            geom_hline(yintercept = 0,linetype="dashed") +
+            geom_vline(xintercept = 0,linetype="dashed") +
+            xlab("Difference in Median GC3% \nHigher GC3% Cluster - Lower GC3% Cluster") +
+            ylab(expression(atop(Delta*"DIC","VarMut - ConstMut"))) +
+            ggtitle("Impact of Differences in GC3% between cluster\non model selection") +
+            theme(aspect.ratio = 1)
+dic.loglik.vs.gc3 
+
+dic.comp <- plot_grid(dic.loglik.plot,dic.loglik.vs.gc3,labels=c("A","B"))
+dic.comp
+
+ggsave2("Figures/dic.pdf",dic.comp,width=14,height = 7)
+```
+
+
+
+```{r}
+deta.k1.files <- file.path("Results/ConstMut/",species,"run_2","Parameter_est",paste0(species,"_Selection.csv"))
+dm.k1.files <- file.path("Results/ConstMut/",species,"run_2","Parameter_est",paste0(species,"_Mutation.csv"))
+deta.k2.files <- file.path("Results/VarMut/",species,"run_2","Parameter_est","1_Selection.csv")
+dm.k2.1.files <- file.path("Results/VarMut/",species,"run_2","Parameter_est","1_Mutation.csv")
+dm.k2.2.files <- file.path("Results/VarMut/",species,"run_2","Parameter_est","2_Mutation.csv")
+
+names(deta.k1.files) <- species
+names(dm.k1.files) <- species
+names(deta.k2.files) <- species
+names(dm.k2.1.files) <- species
+names(dm.k2.2.files) <- species
+
+deta.k1 <- purrr::map(deta.k1.files,read_csv,col_types=cols()) %>% bind_rows(.id="Species") %>% 
+  dplyr::select(Species,AA,Codon,Mean) %>% 
+  filter(Mean != 0) %>%
+  dplyr::rename(Selection.K1 = Mean)
+dm.k1 <- purrr::map(dm.k1.files,read_csv,col_types=cols()) %>% bind_rows(.id="Species") %>% 
+  dplyr::select(Species,AA,Codon,Mean) %>% 
+  filter(Mean != 0) %>%
+  dplyr::rename(Mutation.K1 = Mean)
+deta.k2 <- purrr::map(deta.k2.files,read_csv,col_types=cols()) %>% bind_rows(.id="Species") %>% 
+  dplyr::select(Species,AA,Codon,Mean) %>% 
+  filter(Mean != 0) %>%
+  dplyr::rename(Selection.K2 = Mean)
+dm.k2.1 <- purrr::map(dm.k2.1.files,read_csv,col_types=cols()) %>% bind_rows(.id="Species") %>% 
+  dplyr::select(Species,AA,Codon,Mean) %>% 
+  filter(Mean != 0) %>%
+  dplyr::rename(Mutation.K2.1 = Mean)
+dm.k2.2 <- purrr::map(dm.k2.2.files,read_csv,col_types=cols()) %>% bind_rows(.id="Species") %>% 
+  dplyr::select(Species,AA,Codon,Mean) %>% 
+  filter(Mean != 0) %>%
+  dplyr::rename(Mutation.K2.2 = Mean)
+
+csp.df <- list(deta.k1,dm.k1,deta.k2,dm.k2.1,dm.k2.2) %>% purrr::reduce(left_join, by = c("Species","AA","Codon"))
+
+csp.df <- csp.df %>% mutate(Mutation.K2.Diff = Mutation.K2.1 - Mutation.K2.2)
+```
+
+```{r,fig.width=12,fig.height=12}
+
+csp.df.split <- csp.df %>% group_by(Species) %>% group_split()
+
+plotCSP <- function(df)
+{
+  species <- unique(cleanSpeciesLabels(df$Species))
+  k1 <- ggplot(df,aes(x= Selection.K1,y=Mutation.K1)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Selection (K = 1)") +
+        ylab("Mutation (K = 1)") +
+        ggtitle(species)
+  sel <- ggplot(df,aes(x= Selection.K1,y=Selection.K2)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Selection (K = 1)") +
+        ylab("Selection (K = 2)") 
+  mut.1 <- ggplot(df,aes(x= Mutation.K1,y=Mutation.K2.1)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Mutation (K = 1)") +
+        ylab("Mutation Cluster 1 (K = 2)") 
+  mut.2 <- ggplot(df,aes(x= Mutation.K1,y=Mutation.K2.2)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Mutation (K = 1)") +
+        ylab("Mutation Cluster 2 (K = 2)") 
+  
+  k2.1 <- ggplot(df,aes(x= Selection.K2,y=Mutation.K2.1)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Selection (K = 2)") +
+        ylab("Mutation Cluster 1 (K = 2)")
+  k2.2 <- ggplot(df,aes(x= Selection.K2,y=Mutation.K2.2)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Selection (K = 2)") +
+        ylab("Mutation Cluster 2 (K = 2)")
+  mut.k2 <- ggplot(df,aes(x= Mutation.K2.1,y=Mutation.K2.2)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Mutation Cluster 1 (K = 2)") +
+        ylab("Mutation Cluster 2 (K = 2)")
+  sel.k1.diff <- ggplot(df,aes(x= Selection.K1,y=Mutation.K2.Diff)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Selection (K = 1)") +
+        ylab("|Mutation Difference (K = 2)|")
+  sel.k2.diff <- ggplot(df,aes(x= Selection.K2,y=Mutation.K2.Diff)) + geom_point() +
+        theme_cowplot() +
+        theme(aspect.ratio = 1) +
+        stat_cor(method="spearman",label.sep = "\n") + 
+        xlab("Selection (K = 2)") +
+        ylab("|Mutation Difference (K = 2)|")
+  
+  overall <- plot_grid(k1,k2.1,k2.2,sel,mut.1,mut.2,mut.k2,sel.k1.diff,sel.k2.diff,nrow=3,ncol=3)
+  return(overall)
+  
+}
+
+purrr::map(csp.df.split,plotCSP)
+
+```
+
+```{r}
+
+corr.deta.dm <- csp.df %>% dplyr::select(Species,AA,Codon,Selection.K1,Mutation.K2.Diff) %>% 
+  group_by(Species) %>% 
+  nest(-Species) %>%
+  mutate(corr.CSP=purrr::map(data,~cor.test(.x$Selection.K1,.x$Mutation.K2.Diff,method="spearman"))) %>% 
+  mutate(tidied = purrr::map(corr.CSP, broom::tidy)) %>%
+  unnest(tidied) %>%
+  dplyr::select(-data,-corr.CSP)
+corr.deta.dm <- corr.deta.dm %>% mutate(Species=cleanSpeciesLabels(Species))
+
+corr.deta.dm <- corr.deta.dm %>% left_join(dic.df,by="Species")
+corr.deta.dm <- corr.deta.dm %>% filter(Delta.DIC.LogLik < 0.0 & ROC_Difference < 0.0) 
+
+## Use absolute value because correlation will switch depending on if using Mutation.K2.1 - Mutation.K2.2
+## or Mutation.K2.2 - Mutation.K2.1
+p <- ggplot(corr.deta.dm,aes(x=abs(estimate),y=ROC_Difference,label=Species,color=Delta.DIC.LogLik)) + geom_point() +
+     ggrepel::geom_text_repel(point.padding = 5) +
+     theme_cowplot() +
+     ylab("Correlation Shift\nVarMut - ConstMut") +
+     xlab("|Spearman Correlation Coefficient|\nSelection (ConstMut) - Mutation Difference (VarMut)") +
+     stat_cor(method="spearman",label.y.npc = "bottom",label.x.npc = "center")
+
+p
+
+p <- ggplot(corr.deta.dm,aes(x=abs(estimate),y=Delta.DIC.LogLik,label=Species,color=ROC_Difference)) + geom_point() +
+     ggrepel::geom_text_repel(point.padding = 5) +
+     theme_cowplot() +
+     ylab(expression(Delta*"DIC")) +
+     xlab("|Spearman Correlation Coefficient|\nSelection (ConstMut) - Mutation Difference (VarMut)") +
+     stat_cor(method="spearman",label.y.npc = "bottom",label.x.npc = "center")
+
+p
+
+
+```
 
 
 
 
 
 
+```{r}
+
+species <- c("candida_albicans.max.cds","candida_dubliniensis.max.cds","saccharomyces_uvarum.max.cds","ogataea_polymorpha.max.cds","ogataea_parapolymorpha.max.cds")
+
+runs.k.1 <- paste0("Results/VarMut/",species,"/run_2/Parameter_est/gene_expression.txt")
+runs.k.2 <- paste0("Results/VarMut_3/Longer/",species,"/run_2/Parameter_est/gene_expression.txt")
+codonw.files <- paste0("Results/CodonW/",species,"/",str_replace(species,".cds",".out_all"))
 
 
+mixtures <- paste0("Results/Clustering_k_3/",species)
+emp.data <- paste0("Data/Expression/",species)
+
+titles <- species %>% 
+          str_remove(".max.cds") %>% 
+          str_extract("[a-z]+_[a-z]+") %>%
+          str_split("_") %>% 
+          lapply(function(x){paste(str_to_sentence(x[1]),x[2])})
+
+
+
+gc.files <- file.path("Data/GC",species)
+names(gc.files) <- species
+gc.df <- purrr::map(gc.files,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
+gc.df <- gc.df %>% dplyr::rename(GeneID=Gene)
+
+names(mixtures) <- species
+mixtures.df <- purrr::map(mixtures,read_tsv,col_types = cols()) %>% bind_rows(.id="Species")
+mixtures.df <- mixtures.df %>% dplyr::rename(GeneID=Gene)
+
+gc.mixture.df <- mixtures.df %>% left_join(gc.df,by=c("Species","GeneID"))
+# max.cluster <- gc.mixture.df  %>% group_by(Species,Cluster) %>% 
+#                summarize(Median.GC3 = median(GC3)) %>% 
+#                top_n(1) %>%
+#                dplyr::rename(Max.Cluster=Cluster)
+# 
+# gc.mixture.df <- gc.mixture.df %>% left_join(max.cluster,by="Species")
+# gc.mixture.df <- gc.mixture.df %>% 
+#               mutate(Cluster = case_when(Cluster == 1 & Max.Cluster == 1 ~ 2,
+#                                          Cluster == 2 & Max.Cluster == 1 ~ 1,
+#                                          Cluster == 1 & Max.Cluster == 2 ~ 1,
+#                                          Cluster == 2 & Max.Cluster == 2 ~ 2)
+#               )
+
+
+
+```
+
+
+
+```{r,warning=F}
+
+
+names(runs.k.1) <- species
+names(runs.k.2) <- species
+names(codonw.files) <- species
+names(emp.data) <- species
+names(mixtures) <- species
+
+
+df <- pmap(list(runs.k.1,runs.k.2,codonw.files,emp.data,mixtures),createTable) %>% bind_rows(.id="Species")
+
+df <- df %>% left_join(gc.df,by=c("Species","GeneID"))
+
+# max.cluster <- df %>% group_by(Species,Cluster) %>% 
+#                summarize(Median.GC3 = median(GC3)) %>% 
+#                top_n(1) %>%
+#                dplyr::rename(Max.Cluster=Cluster)
+# df <- df %>% left_join(max.cluster,by="Species") %>% 
+#               mutate(Cluster = case_when(Cluster == 1 & Max.Cluster == 1 ~ 2,
+#                                          Cluster == 2 & Max.Cluster == 1 ~ 1,
+#                                          Cluster == 1 & Max.Cluster == 2 ~ 1,
+#                                          Cluster == 2 & Max.Cluster == 2 ~ 2)
+#                      )
+# df <- df %>% dplyr::select(-Max.Cluster,-Median.GC3)
+
+df.long <- df %>% 
+  pivot_longer(c(-Species,-GeneID,-Cluster,-Empirical,-GC3,-GC),names_to="CUB",values_to = "Predicted")
+
+df.long.split <- df.long %>% group_by(Species) %>% group_split()
+```
+
+
+```{r echo = F,fig.width=18,fig.height=14}
+
+tree <- read.tree("Data/tree_with_cds_labels.nwk")
+
+target.species <- c("candida_albicans.max.cds","candida_dubliniensis.max.cds","saccharomyces_uvarum.max.cds","ogataea_polymorpha.max.cds","ogataea_parapolymorpha.max.cds")
+
+
+target.tree <- cleanTree(tree,target.species)
+target.tree$tip.label <- cleanSpeciesLabels(target.tree$tip.label)
+
+target.species.df <- df %>% filter(Species %in% target.species)
+
+target.species.df$Species <- factor(target.species.df$Species,
+                                    levels=c("candida_albicans.max.cds",
+                                          "candida_dubliniensis.max.cds",
+                                          "ogataea_polymorpha.max.cds",
+                                          "ogataea_parapolymorpha.max.cds",
+                                          "saccharomyces_uvarum.max.cds"))
+
+target.species.df <- target.species.df %>% mutate(Species = cleanSpeciesLabels(Species),
+                                                  Cluster=as.factor(Cluster))
+
+levels.yeast <- c("S. uvarum","C. albicans","C. dubliniensis","O. parapolymorpha","O. polymorpha")
+
+target.tree <- rotateConstr(target.tree,levels.yeast)
+
+target.species.df$Species <- factor(target.species.df$Species,levels=levels.yeast)
+
+phi.shared <- compareSpeciesPlot(target.species.df,title="",ncol=8)
+
+
+
+target.species.gc <- target.species.df %>% dplyr::select(Species,GeneID,Cluster,GC3)
+target.species.gc.whole <- target.species.gc
+target.species.gc.whole <- target.species.gc.whole %>% mutate(Cluster = "Genome")
+
+target.species.gc <- list(target.species.gc,target.species.gc.whole) %>% bind_rows()
+target.species.gc$Cluster <- factor(target.species.gc$Cluster,levels=c("Genome","1","2")) 
+
+color.scheme <- c("grey","#E41A1C","#377EB8")
+names(color.scheme) = c("1","2","3")
+
+
+bad.fits <- target.species.df %>% filter(Species %in% c("S. uvarum","C. albicans","C. dubliniensis","O. parapolymorpha","O. polymorpha"))
+
+phi.shared <- compareSpeciesPlot(target.species.df,title="ROC-SEMPPR Predictions of Gene Expression\nVarMut_2 Model",ncol=8)
+
+phi.variable <- compareSpeciesPlot(target.species.df,metric="Phi_Variable_Mutation",title="ROC-SEMPPR Predictions of Gene Expression\nVarMut_3 Model",ncol=8)
+
+compare.phi <- compareFits(target.species.df,ncol=8,color.scheme = color.scheme,cluster.names = c("1","2","3")) + guides(color = guide_legend(override.aes = list(size = 5))) + 
+  ggtitle("Comparison of ROC-SEMPPR Gene Expression Predictions") +
+  xlab("Scaled Predicted Expression\nVarMut_2 Model") + 
+  ylab("Scaled Predicted Expression\nVarMut_3 Model")
+
+
+phi <- plot_grid(phi.shared,phi.variable,labels=c("A","B"),nrow=2,ncol=1,axis="tblr",align="hv")
+
+phi
+
+ggsave2("Figures/k2_vs_k3_phi.pdf",phi,width = 12,height = 10)
+
+```
