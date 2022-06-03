@@ -407,7 +407,8 @@ species <- list.files("Data/Expression/",pattern="*.max.cds")
 These files should already be present in the Results directory.
 ```{r}
 
-target.dir <- paste0("Results/ConstMut/",species,"/run_2/")
+target.dir <- paste0("Results/ConstMut/",species,"/
+                     run_2/")
 purrr::map(target.dir,rescaleParam)
 
 target.dir <- paste0("Results/VarMut/",species,"/run_2/")
