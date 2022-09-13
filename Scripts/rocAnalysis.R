@@ -28,6 +28,7 @@ parser$add_argument("--with_phi",action="store_true")
 parser$add_argument("--obs_phi",type="character",default=NULL)
 parser$add_argument("--restart_file",type="character",default=NULL)
 parser$add_argument("--prior_from_gc",type="double",default=NULL)
+parser$add_argument("--init_sphi",type="character",default=NULL)
 parser$add_argument("--development",help="Run a developmental version of AnaCoDa",action="store_true")
 
 
@@ -58,7 +59,7 @@ prior.from.gc <- args$prior_from_gc
 mix.assign <- args$mixture_assignment
 restart.file <- args$restart_file
 codon.table <- args$codon_table
-
+init.sphi <- args$init_sphi
 if(dev)
 {
 	library(AnaCoDa,lib.loc="~/R_dev/")
@@ -177,7 +178,7 @@ if (with.phi && !is.null(obs.phi))
 
 
 
-mixDef <- "mutationShared" ## options are allUnique, mutationShared, selectionShared, but this only matters if have multiple categories
+mixDef <- "selectionShared" ## options are allUnique, mutationShared, selectionShared, but this only matters if have multiple categories
 
 percent.to.keep <- 0.5 ## Script is set up to stop adapting after 50% of samples and calculate posterior estimates, convergence, mean acceptance rate, etc. from last 50% of samples.
 size <- length(genome)
@@ -188,7 +189,7 @@ if (!is.null(mix.assign))
   tmp <- read.csv(mix.assign,sep="\t",header=T,stringsAsFactors=F)
   geneAssignment <- tmp[,2]
   numMixtures <- length(unique(tmp[,2]))
-  mixture.labels <- c("1","2")
+  mixture.labels <- as.character(sort(unique(tmp[,2])))
 } else{
   geneAssignment <- rep(1,size)
   mixture.labels <- unlist(strsplit(input,"/"))
@@ -201,7 +202,7 @@ sphi_init <- rep(1.5,numMixtures)
 if (!is.null(phi.files))
 {
   segment_exp <- read.table(file=phi.files,sep=",",header=TRUE)
-  init_phi <- c(init_phi,segment_exp[,2])
+  init_phi <- c(init_phi,segment_exp[,"Mean"])
   sphi_init <- rep(sd(log(init_phi)),numMixtures)
   if(length(genome) != length(init_phi))
   {
@@ -229,6 +230,7 @@ if (!is.null(prior.from.gc))
   mutation.prior.mean <- 0
 }
 
+
 dir.create(directory)
 done <- FALSE
 done.adapt <- FALSE
@@ -236,13 +238,15 @@ run_number <- 1
 
 while((!done) && (run_number <= max_num_runs))
 {
-  if (run_number == 1)
+  if (adaptiveWidth == 0)
   {
-    div_run = 0
-  } else{
-    div_run = div
+    percent.to.keep <- 1
+    adaptiveWidth <- 20
+    div_run <- 0
+  } else {
+    percent.to.keep <- 0.5
+    div_run <- div
   }
-  percent.to.keep <- 0.75
   if (is.null(restart.file))
   {
       parameter <- initializeParameterObject(genome,sphi_init,numMixtures, geneAssignment,init.sepsilon = s_eps,split.serine = TRUE, mixture.definition = mixDef, initial.expression.values = init_phi,init.w.obs.phi=with.phi,mutation.prior.mean=mutation.prior.mean)
@@ -254,15 +258,19 @@ while((!done) && (run_number <= max_num_runs))
       if (length(dEta.file) > 0)
       {
         parameter$initSelectionCategories(dEta.file,1,fix_dEta)
-        
+   
       }
       
   } else {
-      previous <- stringr::str_extract(pattern="restart_[0-9]+",string=restart.file)
+      previous <- stringr::str_extract(pattern="run_[0-9]+",string=restart.file)
       run_number <- as.numeric(stringr::str_extract(pattern="[0-9]+",string=previous)) + 1
       parameter<-initializeParameterObject(init.with.restart.file = restart.file,model="ROC")
   }
-
+  if (!is.null(init.sphi))
+  {
+    tmp <- as.numeric(readLines(init.sphi))
+    parameter$setStdDevSynthesisRate(tmp,0)
+  }
   steps.to.adapt <- (samples*thinning)*(1-percent.to.keep)
   dir_name <- paste0(directory,"/run_",run_number)
   dir.create(dir_name)
